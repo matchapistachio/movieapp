@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:movieapp/home_page.dart';
+import 'package:movieapp/core/constants/di/injection.dart';
 
 void main() {
+  setupLocator();
   runApp(const MyApp());
 }
 
