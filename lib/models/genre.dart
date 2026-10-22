@@ -8,4 +8,13 @@ class Genre {
     required this.nama,
     required this.jumlah,
   });
+
+  factory Genre.fromJson(Map<String, dynamic> json) {
+    return Genre(
+      slug: '',
+      nama: '',
+      jumlah: 0,
+
+    );
+  }
 }

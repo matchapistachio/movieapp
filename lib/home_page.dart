@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:movieapp/core/constants/di/injection.dart';
+import 'package:movieapp/core/di/injection.dart';
 import 'package:movieapp/detail_page.dart';
+import 'package:movieapp/models/genre.dart';
 import 'package:movieapp/models/movie.dart';
+import 'package:movieapp/search_page.dart';
 import 'package:movieapp/services/movie_service.dart';
+import 'package:movieapp/services/watchlist_service.dart';
 import 'package:movieapp/ui/colors.dart';
 import 'package:movieapp/ui/typography.dart';
+import 'package:movieapp/watchlist_page.dart';
 
 typedef homePage = HomePage;
 
@@ -17,12 +21,24 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final MovieService _movieService = getIt<MovieService>();
+  final WatchlistService _watchlistService = getIt<WatchlistService>();
+
+  int _currentIndex = 0;
 
   List<Movie> _movies = [];
+  List<Genre> _genres = [];
   bool _isLoading = true;
   String? _errorMessage;
 
   int _selectedCategoryIndex = 0;
+
+  List<String> get _categoryTabs {
+    final defaultTabs = ["Now playing", "Upcoming", "Top rated"];
+    if (_genres.isEmpty) {
+      return defaultTabs;
+    }
+    return [...defaultTabs, ..._genres.take(4).map((g) => g.nama)];
+  }
 
   @override
   void initState() {
@@ -37,16 +53,29 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-      final movies = await _movieService.getMovies();
-      setState(() {
-        _movies = movies;
-        _isLoading = false;
-      });
+      final results = await Future.wait([
+        _movieService.getMovies(),
+        _movieService.getGenres(),
+      ]);
+      final loadedMovies = results[0] as List<Movie>;
+      final loadedGenres = results[1] as List<Genre>;
+
+      _watchlistService.seedInitialMovies(loadedMovies);
+
+      if (mounted) {
+        setState(() {
+          _movies = loadedMovies;
+          _genres = loadedGenres;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceAll("Exception: ", "");
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString().replaceAll("Exception: ", "");
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -54,7 +83,9 @@ class _HomePageState extends State<HomePage> {
     if (rawUrl.isEmpty) {
       return Container(
         color: buttonGrey,
-        child: const Center(child: Icon(Icons.movie, color: white, size: 36)),
+        child: const Center(
+          child: Icon(Icons.movie, color: white, size: 36),
+        ),
       );
     }
 
@@ -84,15 +115,15 @@ class _HomePageState extends State<HomePage> {
       );
     }
 
-    final assetPath = rawUrl.startsWith('assets/')
-        ? rawUrl
-        : 'assets/images/$rawUrl';
+    final assetPath = rawUrl.startsWith('assets/') ? rawUrl : 'assets/images/$rawUrl';
     return Image.asset(
       assetPath,
       fit: fit,
       errorBuilder: (context, error, stackTrace) => Container(
         color: buttonGrey,
-        child: const Center(child: Icon(Icons.movie, color: white, size: 36)),
+        child: const Center(
+          child: Icon(Icons.movie, color: white, size: 36),
+        ),
       ),
     );
   }
@@ -101,7 +132,9 @@ class _HomePageState extends State<HomePage> {
     try {
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (context) => DetailPage(movie: movie)),
+        MaterialPageRoute(
+          builder: (context) => DetailPage(movie: movie),
+        ),
       );
     } catch (e) {
       debugPrint("Gagal navigasi ke detail page: $e");
@@ -111,33 +144,108 @@ class _HomePageState extends State<HomePage> {
   List<Movie> _getFilteredCategoryMovies() {
     if (_movies.isEmpty) return [];
 
-    switch (_selectedCategoryIndex) {
-      case 0:
+    final tabs = _categoryTabs;
+    if (_selectedCategoryIndex < 0 || _selectedCategoryIndex >= tabs.length) {
+      return _movies;
+    }
+
+    final selected = tabs[_selectedCategoryIndex];
+
+    switch (selected) {
+      case "Now playing":
         return _movies;
-      case 1:
+      case "Upcoming":
         final upcoming = _movies.where((m) => m.releaseYear >= 2022).toList();
-        return upcoming.isNotEmpty ? upcoming : _movies;
-      case 2:
-        final sorted = List<Movie>.from(_movies)
-          ..sort((a, b) => b.rating.compareTo(a.rating));
-        return sorted;
+        return upcoming.isNotEmpty ? upcoming : _movies.reversed.toList();
+      case "Top rated":
+        final topRated = [..._movies];
+        topRated.sort((a, b) => b.rating.compareTo(a.rating));
+        return topRated;
       default:
-        return _movies;
+        final filtered = _movies.where((m) {
+          return m.genre.any((g) => g.toLowerCase() == selected.toLowerCase());
+        }).toList();
+        return filtered.isNotEmpty ? filtered : _movies;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: background,
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          _buildHomeView(),
+          const SearchPage(),
+          const WatchlistPage(),
+        ],
+      ),
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          color: background,
+          border: Border(
+            top: BorderSide(
+              color: blue.withValues(alpha: 0.25),
+              width: 1,
+            ),
+          ),
+        ),
+        child: BottomNavigationBar(
+          currentIndex: _currentIndex,
+          onTap: (index) {
+            setState(() {
+              _currentIndex = index;
+            });
+          },
+          type: BottomNavigationBarType.fixed,
+          backgroundColor: background,
+          selectedItemColor: blue,
+          unselectedItemColor: const Color(0xFF67686D),
+          selectedLabelStyle: const TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+          unselectedLabelStyle: const TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 12,
+            fontWeight: FontWeight.w400,
+          ),
+          elevation: 0,
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.home_outlined),
+              activeIcon: Icon(Icons.home_rounded),
+              label: 'Home',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.search_rounded),
+              activeIcon: Icon(Icons.search_rounded),
+              label: 'Search',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.bookmark_outline_rounded),
+              activeIcon: Icon(Icons.bookmark_rounded),
+              label: 'Watch list',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHomeView() {
     final mediaQuery = MediaQuery.of(context);
     final screenWidth = mediaQuery.size.width;
 
     final int crossAxisCount = screenWidth > 900
         ? 5
         : screenWidth > 600
-        ? 4
-        : screenWidth > 380
-        ? 3
-        : 2;
+            ? 4
+            : screenWidth > 380
+                ? 3
+                : 2;
 
     final popularMovies = _movies.where((m) => m.rating >= 8.0).toList();
     final categoryMovies = _getFilteredCategoryMovies();
@@ -145,6 +253,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: background,
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         backgroundColor: background,
         elevation: 0,
         title: Text(
@@ -156,11 +265,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildBody(
-    int crossAxisCount,
-    List<Movie> popularMovies,
-    List<Movie> categoryMovies,
-  ) {
+  Widget _buildBody(int crossAxisCount, List<Movie> popularMovies, List<Movie> categoryMovies) {
     if (_isLoading) {
       return Center(
         child: Column(
@@ -184,13 +289,12 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.wifi_off_rounded,
-                color: Colors.redAccent,
-                size: 64,
-              ),
+              const Icon(Icons.wifi_off_rounded, color: Colors.redAccent, size: 64),
               const SizedBox(height: 16),
-              Text("Gagal Memuat Data", style: mBold.copyWith(color: white)),
+              Text(
+                "Gagal Memuat Data",
+                style: mBold.copyWith(color: white),
+              ),
               const SizedBox(height: 8),
               Text(
                 _errorMessage!,
@@ -204,10 +308,7 @@ class _HomePageState extends State<HomePage> {
                 label: const Text("Coba Lagi", style: TextStyle(color: white)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: blue,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -219,6 +320,8 @@ class _HomePageState extends State<HomePage> {
       );
     }
 
+    final tabs = _categoryTabs;
+
     return RefreshIndicator(
       color: blue,
       backgroundColor: buttonGrey,
@@ -226,11 +329,46 @@ class _HomePageState extends State<HomePage> {
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text("Popular", style: smBold.copyWith(color: white)),
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _currentIndex = 1;
+                  });
+                },
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  height: 48,
+                  margin: const EdgeInsets.only(bottom: 24),
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3A3F47),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          "Search",
+                          style: sRegular.copyWith(color: const Color(0xFF92929D)),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.search_rounded,
+                        color: Color(0xFF92929D),
+                        size: 22,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Text(
+                "Popular",
+                style: smBold.copyWith(color: white),
+              ),
               const SizedBox(height: 8),
               Container(
                 height: 4,
@@ -245,16 +383,12 @@ class _HomePageState extends State<HomePage> {
                 height: 220,
                 child: popularMovies.isEmpty
                     ? Center(
-                        child: Text(
-                          "Tidak ada film populer",
-                          style: sRegular.copyWith(color: grey),
-                        ),
+                        child: Text("Tidak ada film populer", style: sRegular.copyWith(color: grey)),
                       )
                     : ListView.separated(
                         scrollDirection: Axis.horizontal,
                         itemCount: popularMovies.length,
-                        separatorBuilder: (context, index) =>
-                            const SizedBox(width: 14),
+                        separatorBuilder: (context, index) => const SizedBox(width: 14),
                         itemBuilder: (context, index) {
                           final movie = popularMovies[index];
                           return GestureDetector(
@@ -272,30 +406,19 @@ class _HomePageState extends State<HomePage> {
                                   top: 8,
                                   right: 8,
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                     decoration: BoxDecoration(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.75,
-                                      ),
+                                      color: Colors.black.withValues(alpha: 0.75),
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        const Icon(
-                                          Icons.star,
-                                          color: Colors.amber,
-                                          size: 14,
-                                        ),
+                                        const Icon(Icons.star, color: Colors.amber, size: 14),
                                         const SizedBox(width: 4),
                                         Text(
                                           movie.rating.toString(),
-                                          style: xsBold.copyWith(
-                                            color: Colors.amber,
-                                          ),
+                                          style: xsBold.copyWith(color: Colors.amber),
                                         ),
                                       ],
                                     ),
@@ -328,14 +451,16 @@ class _HomePageState extends State<HomePage> {
                       ),
               ),
               const SizedBox(height: 28),
-              Wrap(
-                spacing: 16,
-                runSpacing: 10,
-                children: [
-                  _buildCategoryTab("Now Playing", 0),
-                  _buildCategoryTab("Upcoming", 1),
-                  _buildCategoryTab("Top Rated", 2),
-                ],
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: List.generate(tabs.length, (index) {
+                    return Padding(
+                      padding: EdgeInsets.only(right: index == tabs.length - 1 ? 0 : 20),
+                      child: _buildCategoryTab(tabs[index], index),
+                    );
+                  }),
+                ),
               ),
               const SizedBox(height: 18),
               categoryMovies.isEmpty
@@ -378,30 +503,19 @@ class _HomePageState extends State<HomePage> {
                                     bottom: 6,
                                     right: 6,
                                     child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.75,
-                                        ),
+                                        color: Colors.black.withValues(alpha: 0.75),
                                         borderRadius: BorderRadius.circular(8),
                                       ),
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          const Icon(
-                                            Icons.star,
-                                            color: Colors.amber,
-                                            size: 12,
-                                          ),
+                                          const Icon(Icons.star, color: Colors.amber, size: 12),
                                           const SizedBox(width: 2),
                                           Text(
                                             movie.rating.toString(),
-                                            style: xxsBold.copyWith(
-                                              color: Colors.amber,
-                                            ),
+                                            style: xxsBold.copyWith(color: Colors.amber),
                                           ),
                                         ],
                                       ),
@@ -453,7 +567,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 6),
           Container(
             height: 4,
-            width: isSelected ? 40 : 0,
+            width: isSelected ? 32 : 0,
             decoration: BoxDecoration(
               color: isSelected ? blue : Colors.transparent,
               borderRadius: BorderRadius.circular(2),

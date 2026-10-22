@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:movieapp/core/constants/api_constants.dart';
+import 'package:movieapp/models/genre.dart';
 import 'package:movieapp/models/movie.dart';
 
 class MovieService {
@@ -30,6 +31,30 @@ class MovieService {
       throw Exception("Gagal memuat film: Terjadi kesalahan sistem.");
     }
   }
+  
+  Future<List<Genre>> getGenres() async {
+    try {
+      final response = await _dio.get(ApiConstants.movieGenres);
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        if (data is Map<String, dynamic> && data['data'] is List) {
+          final List listData = data['data'];
+          return listData
+              .map((item) => Genre.fromJson(item as Map<String, dynamic>))
+              .toList();
+        }
+      }
+      return [];
+    } on DioException catch (e) {
+      debugPrint("Dio error saat getMovies: ${e.message}");
+      throw _handleDioError(e);
+    } catch (e) {
+      debugPrint("Error umum saat getMovies: $e");
+      throw Exception("Gagal memuat film: Terjadi kesalahan sistem.");
+    }
+  }
+
 
   Future<Movie> getMovieDetail(int id) async {
     try {
